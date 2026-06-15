@@ -1,0 +1,6 @@
+# Normalize line endings: store LF in the repo, check out native.
+* text=auto
+
+# Windows batch scripts should be CRLF when checked out.
+*.cmd text eol=crlf
+*.bat text eol=crlf
