@@ -229,7 +229,7 @@ var open=d.classList.toggle('open');r.classList.toggle('open',open);}
 function flt(e,band){document.querySelectorAll('tr.row').forEach(function(r){
 var show=band==='all'||r.classList.contains('band-'+band);
 r.style.display=show?'':'none';
-var d=r.nextElementSibling;if(d&&d.classList.contains('detail')){d.style.display='none';d.classList.remove('open');r.classList.remove('open');}});
+var d=r.nextElementSibling;if(d&&d.classList.contains('detail')){d.classList.remove('open');r.classList.remove('open');}});
 document.querySelectorAll('.fbtn').forEach(function(x){x.classList.remove('active')});
 e.target.classList.add('active');}
 ";
