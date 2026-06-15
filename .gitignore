@@ -1,0 +1,8 @@
+# Build output
+bin/
+obj/
+*.user
+
+# Run history lives outside the repo by default (~/.winget-agent/runs/).
+# This only matters if someone points `scan -o runs/...` back into the repo.
+runs/
