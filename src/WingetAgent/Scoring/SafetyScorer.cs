@@ -60,6 +60,29 @@ public static class SafetyScorer
         if (u.CurrentVersion.Equals("Unknown", StringComparison.OrdinalIgnoreCase))
             Add("currentVersion", -10, "Installed version unknown — cannot verify the delta");
 
+        // Run-over-run baseline. New/changed targets get a mild caution only when we
+        // can't already see their freshness via the release date (avoids double-counting
+        // age); updates that have sat pending across runs are treated as matured.
+        switch (u.Baseline)
+        {
+            case BaselineChange.New when u.AgeDays is null:
+                Add("baseline", -5, "New since last run; release date unknown"); break;
+            case BaselineChange.Updated when u.AgeDays is null:
+                Add("baseline", -5, "Target changed since last run; release date unknown"); break;
+            case BaselineChange.New:
+                Add("baseline", 0, "New since last run (freshness already scored by age)"); break;
+            case BaselineChange.Updated:
+                Add("baseline", 0, "Target changed since last run (freshness already scored by age)"); break;
+            case BaselineChange.Pending:
+                int pd = u.PendingDays ?? 0;
+                if (pd >= 30) Add("baseline", 8, $"Pending {pd}d across runs — matured without issues");
+                else if (pd >= 14) Add("baseline", 5, $"Pending {pd}d across runs");
+                else if (pd >= 7) Add("baseline", 3, $"Pending {pd}d across runs");
+                else Add("baseline", 0, $"Pending {pd}d across runs");
+                break;
+            default: /* NoBaseline */ break;
+        }
+
         s.Value = Math.Clamp(s.Value, 0, 100);
         s.Band = s.Value >= 75 ? SafetyBand.Safe : s.Value >= 50 ? SafetyBand.Review : SafetyBand.Risky;
         return s;

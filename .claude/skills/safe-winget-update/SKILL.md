@@ -29,7 +29,9 @@ dotnet run --project src/WingetAgent -c Release -- scan
 
 ## Step 2: Analyze
 
-Read `RUNDIR/updates.json`. Each entry has the winget fields, derived `category`/`jump`/`publisher`, enrichment (`releaseDate`, `ageDays`, `recentVersions`), and a baseline `score` with a `factors` breakdown.
+Read `RUNDIR/updates.json`. Each entry has the winget fields, derived `category`/`jump`/`publisher`, enrichment (`releaseDate`, `ageDays`, `recentVersions`), a run-over-run `baseline` (`New`/`Updated`/`Pending` + `pendingDays`), and a `score` with a `factors` breakdown. The run also lists `resolvedSinceBaseline` (applied since last run) and `baselineDate`.
+
+Use the baseline to focus your research: **New** and **Updated** items changed since last run and deserve a closer look; **Pending** items have been available a while (likely lower risk).
 
 For each update that is **Risky, a Major jump, a Driver/System component, very fresh (`ageDays` < 7), unknown age, or otherwise non-obvious**, use `WebSearch` to look up known problems with the **exact target version** — package name + target version + terms like "issues", "regression", "breaking", "release notes". Confirm with `WebFetch` on the vendor/GitHub releases page when it matters.
 
@@ -70,6 +72,7 @@ Regenerates `report.html` and `apply-updates.cmd` in `RUNDIR`, merging your anno
 
 Tell the user:
 - Counts by band (Safe / Review / Risky) and how many you flagged Skip.
+- What changed since the last run (new / updated / resolved), if there was a baseline.
 - The riskiest / most notable items and *why*, citing what you found.
 - How to view it: `dotnet run --project src/WingetAgent -c Release -- open` (report in browser) or `... open --folder` (the run folder). Mention the `RUNDIR` path too.
 - That they should review, optionally curate the `.cmd` (toggle `REM ` on/off), then **run `apply-updates.cmd` as administrator** to apply. It self-elevates.

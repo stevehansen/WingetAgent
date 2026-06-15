@@ -82,6 +82,10 @@ Starts at 70, adjusted by independent factors (each shown in the report):
 
 Bands: **Safe** ≥ 75, **Review** ≥ 50, **Risky** < 50.
 
+## Run-over-run baseline
+
+Each scan compares against the previous run (in the same folder), so a weekly cadence shows **what changed**. Every update is tagged **New** (newly offered), **Updated** (target moved since last run), or **Pending** (carried over), and the report header summarizes `N new · M updated · K pending · R resolved` plus a "resolved since last run" list (things you've since applied). This feeds the score lightly: a new/changed target gets a small caution *only when its release date is unknown* (otherwise age already covers freshness), while an update that's sat pending and stable across runs earns a small maturity bonus. The first run has no baseline and is scored neutrally.
+
 ## GitHub token
 
 Enrichment uses the GitHub API (~2 calls/package). Unauthenticated callers get 60 requests/hour, so without a token only ~25 packages are enriched per run (the engine warns and degrades gracefully). A token lifts this to 5000/hr.

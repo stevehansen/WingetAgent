@@ -20,4 +20,22 @@ public static class RunPaths
         Directory.Exists(Base)
             ? Directory.GetDirectories(Base).OrderByDescending(d => d, StringComparer.Ordinal).FirstOrDefault()
             : null;
+
+    /// <summary>
+    /// The most recent prior run that holds an updates.json among the siblings of
+    /// <paramref name="currentDir"/> (i.e. in the same parent folder), excluding the current
+    /// run itself. This is the baseline a new run compares against — so a `-o` run baselines
+    /// against other runs in that same location, and a default run against ~/.winget-agent/runs.
+    /// </summary>
+    public static string? PreviousRun(string currentDir)
+    {
+        var full = Path.GetFullPath(currentDir);
+        var parent = Path.GetDirectoryName(full);
+        if (parent is null || !Directory.Exists(parent)) return null;
+        return Directory.GetDirectories(parent)
+            .Where(d => !string.Equals(Path.GetFullPath(d), full, StringComparison.OrdinalIgnoreCase))
+            .Where(d => File.Exists(Path.Combine(d, "updates.json")))
+            .OrderByDescending(Directory.GetLastWriteTimeUtc)
+            .FirstOrDefault();
+    }
 }

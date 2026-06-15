@@ -37,7 +37,10 @@ public static class HtmlReportWriter
         b.Append($"<button class=\"fbtn pill-safe\" onclick=\"flt(event,'safe')\">Safe {safe}</button>");
         b.Append($"<button class=\"fbtn pill-review\" onclick=\"flt(event,'review')\">Review {review}</button>");
         b.Append($"<button class=\"fbtn pill-risky\" onclick=\"flt(event,'risky')\">Risky {risky}</button>");
-        b.Append("</div></header>");
+        b.Append("</div>");
+        b.Append(BaselineSummary(run));
+        b.Append("</header>");
+        AppendResolved(b, run);
 
         if (run.Updates.Count == 0)
         {
@@ -49,7 +52,7 @@ public static class HtmlReportWriter
 
         // Table
         b.Append("<table><thead><tr>");
-        foreach (var h in new[] { "", "Name", "Id", "Update", "Category", "Age", "Jump", "Score", "Recommendation" })
+        foreach (var h in new[] { "", "Name", "Id", "Update", "Category", "Age", "Since", "Jump", "Score", "Recommendation" })
             b.Append("<th>").Append(h).Append("</th>");
         b.Append("</tr></thead><tbody>");
 
@@ -68,13 +71,14 @@ public static class HtmlReportWriter
             b.Append("<td class=\"mono\">").Append(E(u.CurrentVersion)).Append(" &rarr; ").Append(E(u.AvailableVersion)).Append("</td>");
             b.Append("<td>").Append(u.Category).Append("</td>");
             b.Append("<td>").Append(age).Append("</td>");
+            b.Append("<td>").Append(SinceBadge(u)).Append("</td>");
             b.Append("<td>").Append(u.Jump).Append("</td>");
             b.Append($"<td><span class=\"score band-{band}\">{score}</span></td>");
             b.Append("<td>").Append(E(rec)).Append("</td>");
             b.Append("</tr>");
 
             // Detail
-            b.Append($"<tr class=\"detail band-{band}\"><td></td><td colspan=\"8\"><div class=\"detail-box\">");
+            b.Append($"<tr class=\"detail band-{band}\"><td></td><td colspan=\"9\"><div class=\"detail-box\">");
 
             b.Append("<div class=\"col\"><h3>Score factors</h3><ul class=\"factors\">");
             foreach (var f in u.Score.Factors)
@@ -139,6 +143,36 @@ public static class HtmlReportWriter
         => Uri.TryCreate(s, UriKind.Absolute, out var u)
            && (u.Scheme == Uri.UriSchemeHttp || u.Scheme == Uri.UriSchemeHttps);
 
+    static string SinceBadge(EnrichedUpdate u) => u.Baseline switch
+    {
+        BaselineChange.New => "<span class=\"since since-new\">New</span>",
+        BaselineChange.Updated => "<span class=\"since since-upd\">Updated</span>",
+        BaselineChange.Pending => $"<span class=\"since since-pend\">Pending {u.PendingDays ?? 0}d</span>",
+        _ => "<span class=\"since-none\">&mdash;</span>",
+    };
+
+    static string BaselineSummary(RunManifest run)
+    {
+        if (run.BaselineDate is null)
+            return "<div class=\"since-summary\">First run — no baseline to compare against.</div>";
+
+        int nNew = run.Updates.Count(u => u.Baseline == BaselineChange.New);
+        int nUpd = run.Updates.Count(u => u.Baseline == BaselineChange.Updated);
+        int nPend = run.Updates.Count(u => u.Baseline == BaselineChange.Pending);
+        int nRes = run.ResolvedSinceBaseline.Count;
+        return $"<div class=\"since-summary\">Since {E(run.BaselineDate.Value.ToString("yyyy-MM-dd"))}: " +
+               $"<b>{nNew}</b> new &middot; <b>{nUpd}</b> updated &middot; <b>{nPend}</b> pending &middot; <b>{nRes}</b> resolved</div>";
+    }
+
+    static void AppendResolved(System.Text.StringBuilder b, RunManifest run)
+    {
+        if (run.ResolvedSinceBaseline.Count == 0) return;
+        b.Append($"<details class=\"resolved\"><summary>{run.ResolvedSinceBaseline.Count} resolved since last run (no longer pending — likely applied)</summary><ul>");
+        foreach (var r in run.ResolvedSinceBaseline)
+            b.Append($"<li>{E(r.Name)} <span class=\"mono\">({E(r.Id)})</span> — was {E(r.PreviousVersion)}</li>");
+        b.Append("</ul></details>");
+    }
+
     const string Css = @"
 :root{--safe:#1a7f37;--review:#9a6700;--risky:#cf222e;--bg:#f6f8fa;--line:#d0d7de;}
 *{box-sizing:border-box}
@@ -178,6 +212,15 @@ a{color:#0969da}
 footer{padding:18px 28px;color:#57606a;font-size:12px;border-top:1px solid var(--line)}
 .empty{padding:40px;text-align:center;color:var(--safe);font-size:16px}
 code{background:var(--bg);padding:1px 5px;border-radius:4px}
+.since-summary{margin-top:10px;font-size:13px;color:#57606a}
+.since{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:700}
+.since-new{background:#ddf4ff;color:#0969da}
+.since-upd{background:#fff1c2;color:#9a6700}
+.since-pend{background:#eaeef2;color:#57606a}
+.since-none{color:#afb8c1}
+details.resolved{padding:10px 28px;font-size:13px;border-bottom:1px solid var(--line);background:var(--bg)}
+details.resolved summary{cursor:pointer;color:#57606a;font-weight:600}
+details.resolved ul{margin:8px 0 0;padding-left:20px;color:#57606a}
 ";
 
     const string Js = @"

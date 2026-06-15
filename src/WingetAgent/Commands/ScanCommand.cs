@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using Spectre.Console;
 using Spectre.Console.Cli;
+using WingetAgent.Baseline;
 using WingetAgent.Enrichment;
 using WingetAgent.GitHub;
 using WingetAgent.Models;
@@ -102,6 +103,9 @@ public sealed class ScanCommand : AsyncCommand<ScanCommand.Settings>
             else if (!client.HasToken && ups.Count > 25)
                 AnsiConsole.MarkupLine("[yellow]Enriched first 25 packages (unauthenticated). Run [grey]wingetagent token[/] to enrich all.[/]");
         }
+
+        run.Updates = ups;
+        BaselineComparer.Apply(run, dir);              // compare vs the previous run before scoring
 
         foreach (var u in ups) u.Score = SafetyScorer.Score(u);
         run.Updates = ups.OrderBy(u => u.Score.Value).ToList(); // riskiest first

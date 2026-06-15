@@ -47,7 +47,14 @@ public static class CmdWriter
 
             int score = a?.AdjustedScore ?? u.Score.Value;
             var age = u.AgeDays?.ToString() ?? "?";
-            sb.AppendLine($":: [{u.Score.Band.ToString().ToUpperInvariant()} {score}] {u.Id}  {u.CurrentVersion} -> {u.AvailableVersion}  ({u.Category}, {u.Jump}, age {age}d)");
+            var since = u.Baseline switch
+            {
+                BaselineChange.New => ", new since last run",
+                BaselineChange.Updated => ", target changed since last run",
+                BaselineChange.Pending => $", pending {u.PendingDays ?? 0}d",
+                _ => "",
+            };
+            sb.AppendLine($":: [{u.Score.Band.ToString().ToUpperInvariant()} {score}] {u.Id}  {u.CurrentVersion} -> {u.AvailableVersion}  ({u.Category}, {u.Jump}, age {age}d{since})");
             if (!string.IsNullOrWhiteSpace(a?.Notes))
                 sb.AppendLine($"::   note: {OneLine(a!.Notes)}");
 

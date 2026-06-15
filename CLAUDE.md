@@ -49,6 +49,7 @@ Runs are written to `~/.winget-agent/runs/<timestamp>/` by default (override wit
 | Winget | `Winget/WingetClient.cs` (CLI shell-out + column-offset table parser) |
 | Enrichment | `Enrichment/WingetPkgsClient.cs` (GitHub manifests), `VersionAnalyzer.cs` (semver jump), `CategoryClassifier.cs` |
 | Scoring | `Scoring/SafetyScorer.cs` (deterministic 0–100 + factors) |
+| Baseline | `Baseline/BaselineComparer.cs` (run-over-run diff: New/Updated/Pending + FirstSeen→PendingDays) |
 | Output | `Output/{HtmlReportWriter,CmdWriter,JsonIo,ReportRenderer}.cs` |
 | Config / paths | `GitHub/GitHubToken.cs` (user-secrets + env token), `Paths.cs` (run directory location) |
 | Models | `Models/Models.cs` |
@@ -61,7 +62,8 @@ Runs are written to `~/.winget-agent/runs/<timestamp>/` by default (override wit
 - **Token resolution.** `GitHubToken.Resolve()` prefers .NET user-secrets (`GitHub:Token`) over the `GITHUB_TOKEN` env var; the recommended token has **no scopes** (public read). Never log it or write it to an artifact.
 - **GitHub rate limit.** Enrichment is ~2 API calls/package. Unauthenticated = 60/hr → engine caps at 25 packages and warns (pointing at `wingetagent token`). Enrichment degrades to "age unknown", never fails.
 - **Never run `apply-updates.cmd` yourself.** Applying updates is the user's explicit action. The skill generates and explains; the user runs.
-- **Safety scoring** starts at 70; factors: age, version jump (patch +10 / minor 0 / major −20 / unknown −8), category (driver −20 / system −15 / dev −5 / browser +5), publisher trust (±), unknown installed version −10. Bands: Safe ≥75, Review ≥50, Risky <50.
+- **Safety scoring** starts at 70; factors: age, version jump (patch +10 / minor 0 / major −20 / unknown −8), category (driver −20 / system −15 / dev −5 / browser +5), publisher trust (±), unknown installed version −10, baseline (new/changed → −5 *only when release date unknown*, to avoid double-counting age; pending across runs → up to +8 maturity). Bands: Safe ≥75, Review ≥50, Risky <50.
+- **Baseline = the previous run in the same parent folder.** `BaselineComparer` runs before scoring and compares against the most recent sibling run (so `-o` runs chain within their own folder, default runs within `~/.winget-agent/runs/`). `FirstSeen` is carried forward so `PendingDays` reflects true pending-age; missing `FirstSeen` on older runs falls back to that run's date. No prior run → everything `NoBaseline`, nothing penalized.
 
 ## Conventions
 
