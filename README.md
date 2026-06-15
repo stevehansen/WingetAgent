@@ -70,6 +70,8 @@ Useful flags on `scan`:
 
 Open `report.html`, optionally curate `apply-updates.cmd` (each install line can be toggled by adding/removing a leading `REM `), then **run `apply-updates.cmd` as administrator**. It self-elevates via UAC on launch. Risky items and anything the review flagged `Skip` are commented out by default. Every package is pinned to an exact version, and any id/version containing unsafe characters is `BLOCKED` rather than run.
 
+As it runs, each enabled update is announced — `[n/N] Id  cur -> new` — and reported `OK` or `** FAILED` afterward, with a final summary line. So if winget can't satisfy a pin (e.g. `No applicable installer found`), the failing package is named instead of lost in the scroll.
+
 ## Safety scoring
 
 Starts at 70, adjusted by independent factors (each shown in the report):

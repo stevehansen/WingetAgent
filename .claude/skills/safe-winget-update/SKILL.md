@@ -75,7 +75,7 @@ Tell the user:
 - What changed since the last run (new / updated / resolved), if there was a baseline.
 - The riskiest / most notable items and *why*, citing what you found.
 - How to view it: `dotnet run --project src/WingetAgent -c Release -- open` (report in browser) or `... open --folder` (the run folder). Mention the `RUNDIR` path too.
-- That they should review, optionally curate the `.cmd` (toggle `REM ` on/off), then **run `apply-updates.cmd` as administrator** to apply. It self-elevates.
+- That they should review, optionally curate the `.cmd` (toggle `REM ` on/off), then **run `apply-updates.cmd` as administrator** to apply. It self-elevates, labels each install `[n/N]`, prints `OK`/`** FAILED` per package, and ends with a failure-count summary — so any package winget couldn't install is named.
 
 **Never run `apply-updates.cmd` yourself.** Applying updates is the user's explicit action.
 

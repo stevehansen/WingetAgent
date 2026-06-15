@@ -35,16 +35,30 @@ public static class CmdWriter
         sb.AppendLine();
         sb.AppendLine("echo WingetAgent - applying approved updates");
         sb.AppendLine("echo.");
+        sb.AppendLine("set \"FAIL=0\"");
         sb.AppendLine();
 
-        foreach (var u in run.Updates.OrderByDescending(x => x.Score.Value))
-        {
-            annotations.TryGetValue(u.Id, out var a);
-            var rec = a?.Recommendation ?? "";
-            bool claudeSkip = rec.Equals("Skip", StringComparison.OrdinalIgnoreCase);
-            bool claudeApprove = rec.Equals("Approve", StringComparison.OrdinalIgnoreCase);
-            bool skip = (u.Score.Band == SafetyBand.Risky || claudeSkip) && !claudeApprove;
+        var planned = run.Updates
+            .OrderByDescending(x => x.Score.Value)
+            .Select(u =>
+            {
+                annotations.TryGetValue(u.Id, out var a);
+                var rec = a?.Recommendation ?? "";
+                bool claudeSkip = rec.Equals("Skip", StringComparison.OrdinalIgnoreCase);
+                bool claudeApprove = rec.Equals("Approve", StringComparison.OrdinalIgnoreCase);
+                bool blocked = !IsSafeArg(u.Id) || !IsSafeArg(u.AvailableVersion);
+                bool skip = (u.Score.Band == SafetyBand.Risky || claudeSkip) && !claudeApprove;
+                return (u, a, claudeSkip, blocked, skip);
+            })
+            .ToList();
 
+        int activeCount = planned.Count(p => !p.blocked && !p.skip);
+        if (activeCount == 0)
+            sb.AppendLine("echo (No active updates - everything was skipped or blocked. Edit this file to enable lines.)");
+
+        int active = 0;
+        foreach (var (u, a, claudeSkip, blocked, skip) in planned)
+        {
             int score = a?.AdjustedScore ?? u.Score.Value;
             var age = u.AgeDays?.ToString() ?? "?";
             var since = u.Baseline switch
@@ -66,7 +80,7 @@ public static class CmdWriter
             // Defense against command injection (STRIDE T1): an Id/version from a hostile
             // source could carry batch metacharacters. Both are quoted; anything that could
             // still break out of quotes is blocked rather than executed.
-            if (!IsSafeArg(u.Id) || !IsSafeArg(u.AvailableVersion))
+            if (blocked)
             {
                 sb.AppendLine($"REM {cmd}   :: BLOCKED (unsafe characters in id/version)");
             }
@@ -77,19 +91,43 @@ public static class CmdWriter
             }
             else
             {
+                // Announce each enabled install and report its result. winget prints no
+                // package banner when an upgrade fails (e.g. "No applicable installer
+                // found"), so without this the console is an unlabeled wall and a failure
+                // can't be attributed. Failures are tallied for the end-of-run summary.
+                active++;
+                sb.AppendLine("echo.");
+                sb.AppendLine($"echo [{active}/{activeCount}] {EchoSafe(u.Id)}  {EchoSafe(u.CurrentVersion)} -^> {EchoSafe(u.AvailableVersion)}");
                 sb.AppendLine(cmd);
+                sb.AppendLine($"if errorlevel 1 (set /a FAIL+=1& echo   ** FAILED: {EchoSafe(u.Id)} ^(see output above^)) else (echo   OK: {EchoSafe(u.Id)})");
             }
             sb.AppendLine();
         }
 
         sb.AppendLine("echo.");
-        sb.AppendLine("echo Done. Review the output above for any failures.");
+        sb.AppendLine("echo ----------------------------------------");
+        sb.AppendLine("if %FAIL% gtr 0 (echo Completed with %FAIL% failure^(s^). Review the output above.) else (echo All enabled updates applied successfully.)");
         sb.AppendLine("pause");
 
         File.WriteAllText(path, sb.ToString(), new UTF8Encoding(false));
     }
 
     static string OneLine(string s) => s.Replace("\r", " ").Replace("\n", " ").Trim();
+
+    // The progress banners echo a package id/version unquoted, so escape the batch
+    // metacharacters that would otherwise alter control flow (& chains, < > | redirect,
+    // ^ escapes, ( ) group inside the if-blocks). IsSafeArg already excludes " % CR LF
+    // from active lines; this covers the rest so a banner can never run code.
+    static string EchoSafe(string s)
+    {
+        var sb = new StringBuilder(s.Length);
+        foreach (var c in s)
+        {
+            if (c is '^' or '&' or '<' or '>' or '|' or '(' or ')') sb.Append('^');
+            sb.Append(c);
+        }
+        return sb.ToString();
+    }
 
     // Even inside double quotes a batch line can be subverted by " (closes the quote),
     // % (variable expansion), or a newline. winget Ids/versions never legitimately
