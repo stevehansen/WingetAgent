@@ -4,8 +4,9 @@ namespace WingetAgent.Enrichment;
 
 /// <summary>
 /// Classifies the magnitude of a version change by comparing leading numeric
-/// components. Non-numeric suffixes (-beta, +build) are ignored; unparseable or
-/// "Unknown" current versions yield JumpType.Unknown so scoring can be cautious.
+/// components. A leading "v" tag prefix (GitHub-style: v1.0.62) and non-numeric
+/// suffixes (-beta, +build) are ignored; unparseable or "Unknown" current
+/// versions yield JumpType.Unknown so scoring can be cautious.
 /// </summary>
 public static class VersionAnalyzer
 {
@@ -32,6 +33,9 @@ public static class VersionAnalyzer
 
     internal static int[]? ParseParts(string v)
     {
+        v = v.Trim();
+        if (v.Length >= 2 && (v[0] is 'v' or 'V') && char.IsDigit(v[1]))
+            v = v[1..]; // strip GitHub-style "v" tag prefix
         var main = new string(v.TakeWhile(ch => char.IsDigit(ch) || ch == '.').ToArray());
         if (main.Length == 0) return null;
         var nums = new List<int>();
