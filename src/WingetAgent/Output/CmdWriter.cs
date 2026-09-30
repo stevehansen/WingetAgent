@@ -59,7 +59,12 @@ public static class CmdWriter
         int active = 0;
         foreach (var (u, a, claudeSkip, blocked, skip) in planned)
         {
-            int score = a?.AdjustedScore ?? u.Score.Value;
+            // The Band belongs to the engine's Safety Score and is what gates the line, so
+            // keep the pair together; Claude's Adjusted Score and Recommendation are shown
+            // alongside, never mixed into it.
+            var label = $"{u.Score.Band.ToString().ToUpperInvariant()} {u.Score.Value}";
+            if (a?.AdjustedScore is int adjusted) label += $", adjusted {adjusted}";
+            if (!string.IsNullOrWhiteSpace(a?.Recommendation)) label += $", Claude: {a!.Recommendation}";
             var age = u.AgeDays?.ToString() ?? "?";
             var since = u.Baseline switch
             {
@@ -68,7 +73,7 @@ public static class CmdWriter
                 BaselineChange.Pending => $", pending {u.PendingDays ?? 0}d",
                 _ => "",
             };
-            sb.AppendLine($":: [{u.Score.Band.ToString().ToUpperInvariant()} {score}] {u.Id}  {u.CurrentVersion} -> {u.AvailableVersion}  ({u.Category}, {u.Jump}, age {age}d{since})");
+            sb.AppendLine($":: [{label}] {u.Id}  {u.CurrentVersion} -> {u.AvailableVersion}  ({u.Category}, {u.Jump}, age {age}d{since})");
             if (!string.IsNullOrWhiteSpace(a?.Notes))
                 sb.AppendLine($"::   note: {OneLine(a!.Notes)}");
 
