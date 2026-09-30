@@ -11,7 +11,7 @@ The shared vocabulary of WingetAgent. Use these terms in code, comments, reports
 | **Run Directory** | The `runs/<timestamp>/` folder holding a Run's `updates.json`, Report, and Apply Script. | RUNDIR, output dir |
 | **Enrichment** | Augmenting an Update with its release date and version history from the winget-pkgs Manifest. | lookup, hydration |
 | **Report** | The single self-contained `report.html` for a Run. | dashboard, page |
-| **Apply Script** | The dated, self-elevating `apply-updates.cmd` that installs the curated Updates at pinned versions. | install script, batch file, the cmd |
+| **Apply Script** | The dated `apply-updates.cmd` that installs the curated Updates at pinned versions. It self-elevates for Machine/Unknown **Install Scope** Updates and applies **User**-scope ones in its original, non-elevated window. | install script, batch file, the cmd |
 | **Approval** | The act of curating the Apply Script (toggling install lines) before running it; the file itself is the approval record. | sign-off, confirmation |
 
 ## Update assessment
@@ -24,6 +24,7 @@ The shared vocabulary of WingetAgent. Use these terms in code, comments, reports
 | **Band** | The Safety Score bucket: **Safe** (≥75), **Review** (≥50), **Risky** (<50). | level, tier, severity |
 | **Category** | The kind of software, used in scoring: System, Driver, Developer, Browser, Application. | type, kind |
 | **Version Jump** | The magnitude of the version change: Patch, Minor, Major (or Unknown). | delta, bump |
+| **Install Scope** | Where the installed package lives: **User** (per-user) or **Machine** (all users), or **Unknown** when winget lists it under neither (or both). Decides whether the Apply Script runs the Update elevated; it is not a Score Factor. | scope (bare), context, hive, level |
 | **Publisher** | The party that ships the package (the first segment of the package Id). | vendor, author |
 | **Trusted Publisher** | A Publisher on the known-good list, earning a positive Score Factor. | verified, whitelisted |
 | **Release Date** | When the target version was published, read from the Manifest; drives **Age** (days since). | date |
@@ -50,6 +51,7 @@ The shared vocabulary of WingetAgent. Use these terms in code, comments, reports
 - A **Run** contains many **Updates**; each **Update** has one **Safety Score** composed of **Score Factors** and summarized by one **Band**.
 - The **Skill** may attach at most one **Annotation** to an **Update**; an **Annotation** carries one **Recommendation** and an optional **Adjusted Score**.
 - A **Run** yields one **Report** and one **Apply Script**; the Apply Script has one pinned install line per **Update**, with **Risky** or **Skip** lines commented out.
+- Each **Update** has one **Install Scope**; **User**-scope Updates are applied without elevation, after the elevated part of the Apply Script has finished.
 - The **Engine** can produce a Run without the **Skill**; the Skill never installs — only the user runs the **Apply Script**.
 
 ## Example dialogue
@@ -66,4 +68,6 @@ The shared vocabulary of WingetAgent. Use these terms in code, comments, reports
 - **"Review" has three meanings.** (1) a **Band** (Safety Score 50–74), (2) a **Recommendation** value (`Approve`/`Review`/`Skip`), and (3) the user's act of reading the **Report** before **Approval**. Always qualify it — "Review band" vs "Review recommendation" — in code and prose.
 - **"Update" vs "upgrade".** The domain entity is an **Update**. Use "upgrade" *only* when quoting the literal `winget upgrade` command or its raw output; never as the domain noun.
 - **"Score" is two things.** The engine's **Safety Score** (deterministic) vs the Skill's **Adjusted Score** (an Annotation override). Name the one you mean; never bare "score" in code touching both.
+- **"User" is two things.** The operator running the tool (the user) vs the **User** Install Scope. Say "User-scope Update" for the latter, never bare "user update".
+- **"Scope" vs winget's `--scope`.** **Install Scope** is what the Engine *detected* for an installed package (via `winget upgrade --scope ...` listings). The Apply Script does not pass `--scope` to `winget install`; Install Scope only decides whether a line runs elevated.
 - **"Run" verb vs noun.** A **Run** (noun) is the result of a **Scan**. Use **Scan** for the action; reserve "run" the verb for *running the Apply Script*.

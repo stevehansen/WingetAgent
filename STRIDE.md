@@ -2,7 +2,7 @@
 
 ## System Overview
 
-WingetAgent is a local Windows tool that produces a *reviewed* winget update plan. A deterministic C# **Engine** enumerates available **Updates** (via the winget CLI), enriches them from the GitHub `microsoft/winget-pkgs` repository, and assigns a **Safety Score**. A Claude **Skill** researches the risky ones and writes **Annotations**. The Engine then renders a **Report** (`report.html`) and an **Apply Script** (`apply-updates.cmd`). The user reviews the Report, optionally curates the Apply Script, and runs it — at which point it **self-elevates to administrator** and installs the pinned versions.
+WingetAgent is a local Windows tool that produces a *reviewed* winget update plan. A deterministic C# **Engine** enumerates available **Updates** (via the winget CLI), enriches them from the GitHub `microsoft/winget-pkgs` repository, and assigns a **Safety Score**. A Claude **Skill** researches the risky ones and writes **Annotations**. The Engine then renders a **Report** (`report.html`) and an **Apply Script** (`apply-updates.cmd`). The user reviews the Report, optionally curates the Apply Script, and runs it — at which point it **self-elevates to administrator** and installs the pinned versions. **User**-scope Updates (see **Install Scope**) are the exception: winget refuses them from an admin context, so the original, non-elevated window applies them *after* the elevated copy has finished.
 
 > Terms in **bold** are defined in `UBIQUITOUS_LANGUAGE.md`.
 
@@ -31,16 +31,18 @@ WingetAgent is a local Windows tool that produces a *reviewed* winget update pla
                                        │ writes
                                        ▼
                    runs/<ts>/report.html      apply-updates.cmd
-                          (human review)             │ user runs
-                                                      ▼  (UAC: elevate)
-                                       winget install --version <pinned>  [ADMIN]
+                          (human review)             │ user runs (not elevated)
+                                                      ├──► 1. UAC: elevated copy (/elevated), window waits
+                                                      │      winget install --version <pinned>  [ADMIN]   machine/unknown scope
+                                                      └──► 2. same window, after 1 exits
+                                                             winget install --version <pinned>  [USER]    user scope
                                                       ▼
                                               installed software
 ```
 
 ### Trust boundaries
 1. **Internet → Engine**: winget source responses and GitHub API responses are untrusted input.
-2. **Local filesystem → Admin execution**: `runs/<ts>/` artifacts cross into an administrative context the moment the user runs the Apply Script. This is the primary boundary.
+2. **Local filesystem → Admin execution**: `runs/<ts>/` artifacts cross into an administrative context the moment the user runs the Apply Script. This is the primary boundary. When User-scope Updates exist, the script crosses it by relaunching *itself* elevated with `/elevated` (which only selects a label, carries no data) while the non-elevated window waits; user-context installers run only after that copy exits.
 3. **Skill → Engine**: `annotations.json` is data the Engine consumes when rendering.
 
 ### Data classification
@@ -108,9 +110,10 @@ Scoring: **Likelihood (1–4) × Impact (1–4) = Score**. High priority = score
 | ID | Threat | Attack path | L | I | Score | Mitigation |
 | -- | ------ | ----------- | - | - | ----- | ---------- |
 | **E1** | **Self-elevating Apply Script executes unverified content as admin** | The `.cmd` runs `Start-Process -Verb RunAs` and installs without verifying its own integrity — so any successful T1/T2 becomes administrative code execution | 2 | 4 | **8** | Mitigated *upstream* by T1 (validation) and T2 (review + safe storage + pinning); the script only ever contains validated, pinned `winget install` lines; Risky lines are inert by default |
-| E2 | Vendor installers run as admin | Installing any upgrade runs the package's own installer with admin rights (inherent to winget) | 2 | 3 | 6 | **Accepted risk** — inherits winget/source trust; exact-version pinning prevents post-approval substitution; user explicitly initiates |
+| E2 | Vendor installers run as admin | Installing any upgrade runs the package's own installer with admin rights (inherent to winget) | 2 | 3 | 6 | **Accepted risk** — inherits winget/source trust; exact-version pinning prevents post-approval substitution; user explicitly initiates. User-scope Updates run *without* elevation, so their installers never get admin |
+| E3 | User-context code rewrites the Apply Script before its elevated copy reads it | In a split script (User-scope Updates present), a user-scope installer — running as the user, with write access to `runs/<ts>/` — edits `apply-updates.cmd` before the elevated relaunch re-reads it; the user then approves the expected UAC prompt → admin code execution | 1 | 4 | 4 | **[v1.1]** Ordering: the elevated copy is launched *first* and the non-elevated window waits for it (`WaitForExit`), so no user-scope installer runs until all admin work is done. The `/elevated` argument only selects a label; no data crosses the boundary through it. Residual: `cmd` reads batch files incrementally, so host-resident malware editing the file *during* the elevated part remains T2 |
 
-**Countermeasures:** The Engine never installs; only the user runs the Apply Script. The script's content is constrained to validated, pinned install commands, and the high-risk default is *inaction* (commented-out lines).
+**Countermeasures:** The Engine never installs; only the user runs the Apply Script. The script's content is constrained to validated, pinned install commands, and the high-risk default is *inaction* (commented-out lines). Elevation is scoped: User-scope Updates are applied without admin rights, and only after the elevated part has exited.
 
 ---
 
@@ -135,7 +138,7 @@ Scoring: **Likelihood (1–4) × Impact (1–4) = Score**. High priority = score
 | Input validation | Package Id/version validated against a strict charset and quoted before emission; unsafe entries blocked; progress banners escape batch metacharacters (`EchoSafe`) |
 | Output encoding | All Report fields HTML-encoded; Annotation links restricted to `http(s)` |
 | Secret management | Token from .NET user-secrets (preferred) or `GITHUB_TOKEN`; never logged or persisted to artifacts; `wingetagent token` guides least-privilege setup |
-| Least privilege | Recommended token has no scopes (public read only); Engine performs no privileged action |
+| Least privilege | Recommended token has no scopes (public read only); Engine performs no privileged action; User-scope Updates are applied without elevation (elevated part runs first) |
 | Safe defaults | Risky / Skip Updates commented out in the Apply Script; tool never auto-installs |
 | Integrity | Exact-version pinning; dated Run history under the user profile |
 | Transport security | HTTPS with OS cert validation for all GitHub access |
@@ -148,6 +151,7 @@ Scoring: **Likelihood (1–4) × Impact (1–4) = Score**. High priority = score
 | Version | Date | Author | Changes |
 | ------- | ---- | ------ | ------- |
 | v1 | 2026-06-15 | Initial model (Claude Code) | First STRIDE analysis for WingetAgent v1; T1/I1/I2 mitigations implemented in code |
+| v1.1 | 2026-09-30 | Claude Code | Elevation boundary change: Apply Script applies User-scope Updates without elevation (winget `0x8a15007d`), elevated part first; added E3, updated data flow, boundary 2, E2 |
 
 Next review: on any change to artifact generation, token handling, the winget integration, or annually (2027-06-15), whichever comes first.
 
