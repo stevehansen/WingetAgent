@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using WingetAgent.Models;
 
 namespace WingetAgent.Output;
@@ -7,8 +8,8 @@ namespace WingetAgent.Output;
 /// Writes the dated, self-elevating batch file that actually applies the updates.
 /// Every package is pinned to its exact target version and installed silently. The
 /// file IS the approval record: SAFE/REVIEW items are active, while RISKY items (or
-/// anything Claude marked "Skip") are emitted as commented-out REM lines so the
-/// default is conservative. The operator curates by toggling "REM " on/off, then runs
+/// anything Claude marked "Skip", or a Package Policy excludes) are emitted as
+/// commented-out REM lines so the default is conservative. The operator curates by toggling "REM " on/off, then runs
 /// the file — which elevates itself to administrator on launch.
 ///
 /// ASCII-only on purpose: batch consoles default to an OEM code page, so no em dashes
@@ -22,7 +23,7 @@ public static class CmdWriter
         sb.AppendLine("@echo off");
         sb.AppendLine("setlocal EnableExtensions");
         sb.AppendLine($":: WingetAgent apply script - generated {run.GeneratedOn:yyyy-MM-dd HH:mm:ss} on {run.Machine}");
-        sb.AppendLine(":: Review report.html first. RISKY items (and anything flagged 'Skip') are commented out.");
+        sb.AppendLine(":: Review report.html first. RISKY items (and anything flagged 'Skip' or excluded by policy) are commented out.");
         sb.AppendLine(":: To enable a line, delete its leading 'REM '. To skip a line, add 'REM ' in front.");
         sb.AppendLine();
         sb.AppendLine(":: ---- self-elevate to administrator ----");
@@ -46,9 +47,12 @@ public static class CmdWriter
                 var rec = a?.Recommendation ?? "";
                 bool claudeSkip = rec.Equals("Skip", StringComparison.OrdinalIgnoreCase);
                 bool claudeApprove = rec.Equals("Approve", StringComparison.OrdinalIgnoreCase);
-                bool blocked = !IsSafeArg(u.Id) || !IsSafeArg(u.AvailableVersion);
-                bool skip = (u.Score.Band == SafetyBand.Risky || claudeSkip) && !claudeApprove;
-                return (u, a, claudeSkip, blocked, skip);
+                bool excluded = u.Policy?.Exclude == true;
+                var close = u.Policy?.CloseProcesses ?? new();
+                bool blocked = !IsSafeArg(u.Id) || !IsSafeArg(u.AvailableVersion) || !close.All(IsSafeImageName);
+                // A policy is the user's standing decision, so it outranks Claude's Approve.
+                bool skip = excluded || ((u.Score.Band == SafetyBand.Risky || claudeSkip) && !claudeApprove);
+                return (u, a, claudeSkip, excluded, close, blocked, skip);
             })
             .ToList();
 
@@ -57,7 +61,7 @@ public static class CmdWriter
             sb.AppendLine("echo (No active updates - everything was skipped or blocked. Edit this file to enable lines.)");
 
         int active = 0;
-        foreach (var (u, a, claudeSkip, blocked, skip) in planned)
+        foreach (var (u, a, claudeSkip, excluded, close, blocked, skip) in planned)
         {
             // The Band belongs to the engine's Safety Score and is what gates the line, so
             // keep the pair together; Claude's Adjusted Score and Recommendation are shown
@@ -76,22 +80,31 @@ public static class CmdWriter
             sb.AppendLine($":: [{label}] {u.Id}  {u.CurrentVersion} -> {u.AvailableVersion}  ({u.Category}, {u.Jump}, age {age}d{since})");
             if (!string.IsNullOrWhiteSpace(a?.Notes))
                 sb.AppendLine($"::   note: {OneLine(a!.Notes)}");
+            if (!string.IsNullOrWhiteSpace(u.Policy?.Notes))
+                sb.AppendLine($"::   policy: {OneLine(u.Policy!.Notes)}");
 
             var cmd = $"winget install --id \"{u.Id}\" --version \"{u.AvailableVersion}\" --exact " +
                       "--silent --accept-package-agreements --accept-source-agreements --disable-interactivity";
             if (u.Source.Equals("msstore", StringComparison.OrdinalIgnoreCase))
                 cmd += " --source msstore";
 
+            // Some installers cancel while their app runs (Inno Setup AppMutex: "Please close all
+            // instances"), and --silent turns that prompt into an abort. Chained on the same line
+            // so toggling REM enables or disables both together; errorlevel stays winget's. Only
+            // stderr is hidden, so a kill prints its SUCCESS line and "not running" stays quiet.
+            foreach (var image in Enumerable.Reverse(close))
+                cmd = $"taskkill /f /im \"{image}\" 2>nul & {cmd}";
+
             // Defense against command injection (STRIDE T1): an Id/version from a hostile
             // source could carry batch metacharacters. Both are quoted; anything that could
             // still break out of quotes is blocked rather than executed.
             if (blocked)
             {
-                sb.AppendLine($"REM {cmd}   :: BLOCKED (unsafe characters in id/version)");
+                sb.AppendLine($"REM {cmd}   :: BLOCKED (unsafe characters in id/version/process name)");
             }
             else if (skip)
             {
-                var why = claudeSkip ? "Claude: skip" : "risky band";
+                var why = excluded ? "excluded by policy" : claudeSkip ? "Claude: skip" : "risky band";
                 sb.AppendLine($"REM {cmd}   :: SKIPPED ({why})");
             }
             else
@@ -163,4 +176,9 @@ public static class CmdWriter
     // contain these, so their presence means tampering — refuse to emit an active line.
     static bool IsSafeArg(string s)
         => !string.IsNullOrEmpty(s) && s.IndexOfAny(new[] { '"', '%', '\r', '\n' }) < 0;
+
+    // Process names come from the user's policies.json and land in the elevated script, so
+    // allow only a plain image file name (no paths, quotes, wildcards or metacharacters).
+    static bool IsSafeImageName(string s)
+        => Regex.IsMatch(s, @"^[A-Za-z0-9][A-Za-z0-9 ._-]*\.exe$", RegexOptions.IgnoreCase);
 }

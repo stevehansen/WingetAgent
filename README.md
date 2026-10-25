@@ -68,9 +68,25 @@ Useful flags on `scan`:
 
 ## Applying updates
 
-Open `report.html`, optionally curate `apply-updates.cmd` (each install line can be toggled by adding/removing a leading `REM `), then **run `apply-updates.cmd` as administrator**. It self-elevates via UAC on launch. Risky items and anything the review flagged `Skip` are commented out by default. Every package is pinned to an exact version, and any id/version containing unsafe characters is `BLOCKED` rather than run.
+Open `report.html`, optionally curate `apply-updates.cmd` (each install line can be toggled by adding/removing a leading `REM `), then **run `apply-updates.cmd` as administrator**. It self-elevates via UAC on launch. Risky items, anything the review flagged `Skip`, and anything a [package policy](#package-policies) excludes are commented out by default. Every package is pinned to an exact version, and any id/version containing unsafe characters is `BLOCKED` rather than run.
 
 As it runs, each enabled update is announced — `[n/N] Id  cur -> new` — and reported `OK` or `** FAILED` afterward, with a final summary line. So if winget can't satisfy a pin (e.g. `No applicable installer found`), the failing package is named instead of lost in the scroll.
+
+## Package policies
+
+Standing per-package rules live in `~/.winget-agent/policies.json` and apply to every scan (and to `build-report`, so an edit takes effect on the next rebuild):
+
+```json
+[
+  { "id": "Microsoft.VisualStudio.Enterprise", "exclude": true, "notes": "Updated through the Visual Studio Installer." },
+  { "id": "Greenshot.Greenshot", "closeProcesses": ["Greenshot.exe"], "notes": "Installer cancels while Greenshot runs." }
+]
+```
+
+- `exclude` keeps the package's line commented out in `apply-updates.cmd`, whatever its band or the review says. Use it for packages updated another way (their own updater or installer), or for ones winget can't update from an elevated script.
+- `closeProcesses` force-closes those processes (plain `name.exe` only; anything else blocks the line) right before the install, for installers that abort while their app runs. Unsaved work in that app is lost.
+
+The report shows each policy, and the script prints `policy:` next to the affected line.
 
 ## Safety scoring
 
@@ -106,6 +122,7 @@ The token is stored in your user profile via .NET user-secrets — **not** in th
 | Path | What |
 |------|------|
 | `~/.winget-agent/runs/<timestamp>/` | Per-run output + local history (outside the repo) |
+| `~/.winget-agent/policies.json` | Your [package policies](#package-policies) (optional) |
 | user-secrets store | Your GitHub token (per-user) |
 
 ## Security

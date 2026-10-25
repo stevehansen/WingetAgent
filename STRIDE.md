@@ -42,6 +42,7 @@ WingetAgent is a local Windows tool that produces a *reviewed* winget update pla
 1. **Internet → Engine**: winget source responses and GitHub API responses are untrusted input.
 2. **Local filesystem → Admin execution**: `runs/<ts>/` artifacts cross into an administrative context the moment the user runs the Apply Script. This is the primary boundary.
 3. **Skill → Engine**: `annotations.json` is data the Engine consumes when rendering.
+4. **User profile → Engine**: `~/.winget-agent/policies.json` (Package Policies) is user-owned data that feeds the Apply Script: it can comment lines out and add `taskkill` steps before an install.
 
 ### Data classification
 | Data | Classification | Notes |
@@ -70,7 +71,7 @@ Scoring: **Likelihood (1–4) × Impact (1–4) = Score**. High priority = score
 
 | ID | Threat | Attack path | L | I | Score | Mitigation |
 | -- | ------ | ----------- | - | - | ----- | ---------- |
-| **T1** | **Command injection into the Apply Script** | A package **Id**/version from a malicious or custom winget source (or a poisoned manifest) contains shell metacharacters that break out of the `winget install` line → arbitrary commands run at **admin** | 2 | 4 | **8** | **[v1]** Id and version are quoted *and* validated against a strict charset before emit; lines with unsafe characters are emitted **blocked** (commented, never executed); the progress banners echo id/version unquoted but escape batch metacharacters (`& < > \| ^ ( )`) via `EchoSafe` |
+| **T1** | **Command injection into the Apply Script** | A package **Id**/version from a malicious or custom winget source (or a poisoned manifest) contains shell metacharacters that break out of the `winget install` line → arbitrary commands run at **admin** | 2 | 4 | **8** | **[v1]** Id and version are quoted *and* validated against a strict charset before emit; lines with unsafe characters are emitted **blocked** (commented, never executed); the progress banners echo id/version unquoted but escape batch metacharacters (`& < > \| ^ ( )`) via `EchoSafe`; Package Policy process names must be a plain `name.exe` (`IsSafeImageName`), else the line is blocked |
 | **T2** | **Pre-execution tampering of run artifacts** | Malware already on the host, or a `runs/` folder in a cloud-synced/shared-writable location, edits `apply-updates.cmd` / `updates.json` / `annotations.json` before the user runs the script → admin code execution | 2 | 4 | **8** | Human reviews the rendered Report and the `.cmd` before running; keep `runs/` in an ACL-restricted, non-synced path; exact-version pinning prevents silent post-approval version swap |
 | T3 | Misleading Report tricks the reviewer | Tampered `report.html` hides a malicious Update or shows a false score | 2 | 3 | 6 | All rendered fields are HTML-encoded; the `.cmd` is plain-text and independently reviewable; both live side-by-side in the same Run |
 
@@ -132,7 +133,7 @@ Scoring: **Likelihood (1–4) × Impact (1–4) = Score**. High priority = score
 
 | Control category | Implementation |
 | ---------------- | -------------- |
-| Input validation | Package Id/version validated against a strict charset and quoted before emission; unsafe entries blocked; progress banners escape batch metacharacters (`EchoSafe`) |
+| Input validation | Package Id/version validated against a strict charset and quoted before emission; unsafe entries blocked; progress banners escape batch metacharacters (`EchoSafe`); Package Policy process names restricted to plain `name.exe` |
 | Output encoding | All Report fields HTML-encoded; Annotation links restricted to `http(s)` |
 | Secret management | Token from .NET user-secrets (preferred) or `GITHUB_TOKEN`; never logged or persisted to artifacts; `wingetagent token` guides least-privilege setup |
 | Least privilege | Recommended token has no scopes (public read only); Engine performs no privileged action |
@@ -148,6 +149,7 @@ Scoring: **Likelihood (1–4) × Impact (1–4) = Score**. High priority = score
 | Version | Date | Author | Changes |
 | ------- | ---- | ------ | ------- |
 | v1 | 2026-06-15 | Initial model (Claude Code) | First STRIDE analysis for WingetAgent v1; T1/I1/I2 mitigations implemented in code |
+| v1.1 | 2026-10-25 | Claude Code | Package Policies (`policies.json`): new trust boundary 4; T1 extended to validate `closeProcesses` image names before they reach the elevated script |
 
 Next review: on any change to artifact generation, token handling, the winget integration, or annually (2027-06-15), whichever comes first.
 

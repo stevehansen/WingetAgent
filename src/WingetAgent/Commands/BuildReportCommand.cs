@@ -3,6 +3,7 @@ using Spectre.Console;
 using Spectre.Console.Cli;
 using WingetAgent.Models;
 using WingetAgent.Output;
+using WingetAgent.Policy;
 
 namespace WingetAgent.Commands;
 
@@ -57,6 +58,10 @@ public sealed class BuildReportCommand : Command<BuildReportCommand.Settings>
         {
             AnsiConsole.MarkupLine("[grey]No annotations.json — rendering baseline report.[/]");
         }
+
+        int withPolicy = PackagePolicies.Apply(run);
+        if (withPolicy > 0)
+            AnsiConsole.MarkupLine($"Package policies apply to [green]{withPolicy}[/] update(s).");
 
         ReportRenderer.Render(s.Input, run, annotations);
         AnsiConsole.MarkupLine($"Wrote report.html + apply-updates.cmd to [blue]{Path.GetFullPath(s.Input)}[/]");

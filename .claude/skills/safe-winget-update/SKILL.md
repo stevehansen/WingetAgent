@@ -33,6 +33,8 @@ Read `RUNDIR/updates.json`. Each entry has the winget fields, derived `category`
 
 Use the baseline to focus your research: **New** and **Updated** items changed since last run and deserve a closer look; **Pending** items have been available a while (likely lower risk).
 
+An entry with a `policy` carries the user's standing rule from `~/.winget-agent/policies.json`. If `exclude` is true, its line stays commented out whatever you recommend, so don't research it. `closeProcesses` are force-closed before that install. When the user says to always skip a package, or an install keeps failing because its app is running, add or edit an entry in that file (`id`, `exclude` and/or `closeProcesses` as plain `name.exe`, plus `notes`). Don't write a per-run Skip for that.
+
 For each update that is **Risky, a Major jump, a Driver/System component, very fresh (`ageDays` < 7), unknown age, or otherwise non-obvious**, use `WebSearch` to look up known problems with the **exact target version** — package name + target version + terms like "issues", "regression", "breaking", "release notes". Confirm with `WebFetch` on the vendor/GitHub releases page when it matters.
 
 You may skip research for obvious low-risk cases (small patch bumps from trusted publishers like Chrome/Edge) — annotate them briefly or leave them to the baseline.
@@ -71,7 +73,7 @@ Regenerates `report.html` and `apply-updates.cmd` in `RUNDIR`, merging your anno
 ## Step 5: Summarize
 
 Tell the user:
-- Counts by band (Safe / Review / Risky) and how many you flagged Skip.
+- Counts by band (Safe / Review / Risky), how many you flagged Skip, and how many a policy excludes.
 - What changed since the last run (new / updated / resolved), if there was a baseline.
 - The riskiest / most notable items and *why*, citing what you found.
 - How to view it: `dotnet run --project src/WingetAgent -c Release -- open` (report in browser) or `... open --folder` (the run folder). Mention the `RUNDIR` path too.

@@ -13,6 +13,7 @@ The shared vocabulary of WingetAgent. Use these terms in code, comments, reports
 | **Report** | The single self-contained `report.html` for a Run. | dashboard, page |
 | **Apply Script** | The dated, self-elevating `apply-updates.cmd` that installs the curated Updates at pinned versions. | install script, batch file, the cmd |
 | **Approval** | The act of curating the Apply Script (toggling install lines) before running it; the file itself is the approval record. | sign-off, confirmation |
+| **Package Policy** | The user's standing rule for one package Id, kept in `~/.winget-agent/policies.json` and applied to every Run. **Exclude** keeps its Apply Script line commented out; **Close Processes** force-closes named processes right before its install. Keyed by package, not Update, because it outlives any single version change. | config, override, skip list, ignore list |
 
 ## Update assessment
 
@@ -50,6 +51,7 @@ The shared vocabulary of WingetAgent. Use these terms in code, comments, reports
 - A **Run** contains many **Updates**; each **Update** has one **Safety Score** composed of **Score Factors** and summarized by one **Band**.
 - The **Skill** may attach at most one **Annotation** to an **Update**; an **Annotation** carries one **Recommendation** and an optional **Adjusted Score**.
 - A **Run** yields one **Report** and one **Apply Script**; the Apply Script has one pinned install line per **Update**, with **Risky** or **Skip** lines commented out.
+- An **Update** may match one **Package Policy**; an **Exclude** outranks both the **Band** and the **Recommendation** (even `Approve`).
 - The **Engine** can produce a Run without the **Skill**; the Skill never installs — only the user runs the **Apply Script**.
 
 ## Example dialogue
@@ -66,4 +68,5 @@ The shared vocabulary of WingetAgent. Use these terms in code, comments, reports
 - **"Review" has three meanings.** (1) a **Band** (Safety Score 50–74), (2) a **Recommendation** value (`Approve`/`Review`/`Skip`), and (3) the user's act of reading the **Report** before **Approval**. Always qualify it — "Review band" vs "Review recommendation" — in code and prose.
 - **"Update" vs "upgrade".** The domain entity is an **Update**. Use "upgrade" *only* when quoting the literal `winget upgrade` command or its raw output; never as the domain noun.
 - **"Score" is two things.** The engine's **Safety Score** (deterministic) vs the Skill's **Adjusted Score** (an Annotation override). Name the one you mean; never bare "score" in code touching both.
+- **"Skip" vs "Exclude".** **Skip** is a per-Run **Recommendation** (the Skill's judgment on this version); **Exclude** is a standing **Package Policy** (the user's rule for every version). Both comment the line out; don't call a policy a skip.
 - **"Run" verb vs noun.** A **Run** (noun) is the result of a **Scan**. Use **Scan** for the action; reserve "run" the verb for *running the Apply Script*.

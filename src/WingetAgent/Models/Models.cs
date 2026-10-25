@@ -56,6 +56,8 @@ public sealed class EnrichedUpdate
     public int? PendingDays { get; set; }      // days since FirstSeen, for matured-and-still-pending updates
 
     public SafetyScore Score { get; set; } = new();
+
+    public PackagePolicy? Policy { get; set; } // the user's standing rule for this package, if any
 }
 
 /// <summary>The full result of one scan, persisted as updates.json.</summary>
@@ -76,6 +78,21 @@ public sealed class ResolvedItem
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
     public string PreviousVersion { get; set; } = "";
+}
+
+/// <summary>
+/// The user's standing rule for one package Id, kept in ~/.winget-agent/policies.json and
+/// applied to every Run. Unlike an Annotation it is not a per-Run judgment: Exclude keeps
+/// the Apply Script line commented out whatever the Band or Recommendation (e.g. a package
+/// updated through its own installer), and CloseProcesses are force-closed right before
+/// the install (for installers that cancel while the app runs).
+/// </summary>
+public sealed class PackagePolicy
+{
+    public string Id { get; set; } = "";
+    public bool Exclude { get; set; }
+    public List<string> CloseProcesses { get; set; } = new();
+    public string Notes { get; set; } = "";
 }
 
 /// <summary>

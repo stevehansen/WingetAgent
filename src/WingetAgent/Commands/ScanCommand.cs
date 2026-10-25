@@ -6,6 +6,7 @@ using WingetAgent.Enrichment;
 using WingetAgent.GitHub;
 using WingetAgent.Models;
 using WingetAgent.Output;
+using WingetAgent.Policy;
 using WingetAgent.Scoring;
 using WingetAgent.Winget;
 
@@ -109,11 +110,14 @@ public sealed class ScanCommand : AsyncCommand<ScanCommand.Settings>
 
         foreach (var u in ups) u.Score = SafetyScorer.Score(u);
         run.Updates = ups.OrderBy(u => u.Score.Value).ToList(); // riskiest first
+        int withPolicy = PackagePolicies.Apply(run);
 
         JsonIo.Write(Path.Combine(dir, "updates.json"), run);
         ReportRenderer.Render(dir, run, Empty);
 
         PrintSummary(run);
+        if (withPolicy > 0)
+            AnsiConsole.MarkupLine($"[grey]Package policies apply to {withPolicy} update(s) ({Markup.Escape(PackagePolicies.FilePath)}).[/]");
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("Wrote [green]updates.json[/], [green]report.html[/], [green]apply-updates.cmd[/].");
         AnsiConsole.MarkupLine($"Run directory: [blue]{Path.GetFullPath(dir)}[/]");

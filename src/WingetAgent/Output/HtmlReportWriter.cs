@@ -61,7 +61,8 @@ public static class HtmlReportWriter
             annotations.TryGetValue(u.Id, out var a);
             var band = u.Score.Band.ToString().ToLowerInvariant();
             int score = a?.AdjustedScore ?? u.Score.Value;
-            var rec = string.IsNullOrWhiteSpace(a?.Recommendation) ? "—" : a!.Recommendation;
+            var rec = u.Policy?.Exclude == true ? "Excluded (policy)"
+                : string.IsNullOrWhiteSpace(a?.Recommendation) ? "—" : a!.Recommendation;
             var age = u.AgeDays is null ? "?" : u.AgeDays + "d";
 
             b.Append($"<tr class=\"row band-{band}\" onclick=\"tog(this)\">");
@@ -100,6 +101,18 @@ public static class HtmlReportWriter
             if (u.ManifestUrl is not null)
                 b.Append($"<li><a href=\"{E(u.ManifestUrl)}\" target=\"_blank\" rel=\"noopener\">winget-pkgs manifest &#8599;</a></li>");
             b.Append("</ul>");
+
+            if (u.Policy is { } p)
+            {
+                b.Append("<h3>Package policy</h3><ul class=\"kv\">");
+                if (p.Exclude)
+                    b.Append("<li>Excluded: its line in <code>apply-updates.cmd</code> stays commented out.</li>");
+                if (p.CloseProcesses.Count > 0)
+                    b.Append($"<li>Closes <span class=\"mono\">{E(string.Join(", ", p.CloseProcesses))}</span> before installing.</li>");
+                if (!string.IsNullOrWhiteSpace(p.Notes))
+                    b.Append("<li>").Append(E(p.Notes)).Append("</li>");
+                b.Append("</ul>");
+            }
 
             if (a is not null && (!string.IsNullOrWhiteSpace(a.Notes) || a.Sources.Count > 0))
             {
