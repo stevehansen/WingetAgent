@@ -112,6 +112,30 @@ public static class CmdWriter
         sb.AppendLine("echo.");
         sb.AppendLine("echo ----------------------------------------");
         sb.AppendLine("if %FAIL% gtr 0 (echo Completed with %FAIL% failure^(s^). Review the output above.) else (echo All enabled updates applied successfully.)");
+        sb.AppendLine();
+
+        // Installers that replace a shell extension (TeraCopy, WinSCP, ...) close Explorer
+        // through Restart Manager, which then refuses to restart it from this elevated
+        // script ("Application SID does not match Conductor SID"). Explorer can be left
+        // running without a taskbar (it lingers while a file copy is in progress), or not
+        // running at all. Offer the restart rather than force it: the kill would abort such
+        // a copy. An Explorer started from an elevated process de-elevates itself, and
+        // AutoRestartShell may already have relaunched it after the kill, hence the check.
+        // The window name is passed as IntPtr.Zero because PowerShell turns $null into ""
+        // for string parameters, which would only match windows with an empty title.
+        sb.AppendLine(":: ---- Explorer check: an installer may have closed it without restarting it ----");
+        sb.AppendLine("powershell -NoProfile -Command \"$w = Add-Type -Name Win -Namespace WingetAgent -PassThru -MemberDefinition '[DllImport(\\\"user32.dll\\\")] public static extern System.IntPtr FindWindow(string c, System.IntPtr n);'; if ($w::FindWindow('Shell_TrayWnd', [System.IntPtr]::Zero) -eq [System.IntPtr]::Zero) { exit 1 }\"");
+        sb.AppendLine("if errorlevel 1 (");
+        sb.AppendLine("  echo.");
+        sb.AppendLine("  echo The Windows taskbar is missing - an installer closed Explorer and it was not restarted.");
+        sb.AppendLine("  echo A file copy still running in Explorer would be aborted - let it finish first.");
+        sb.AppendLine("  choice /c YN /m \"Restart Windows Explorer now\"");
+        sb.AppendLine("  if not errorlevel 2 (");
+        sb.AppendLine("    taskkill /f /im explorer.exe >nul 2>&1");
+        sb.AppendLine("    timeout /t 3 /nobreak >nul");
+        sb.AppendLine("    tasklist /fi \"imagename eq explorer.exe\" | find /i \"explorer.exe\" >nul || start \"\" explorer.exe");
+        sb.AppendLine("  )");
+        sb.AppendLine(")");
         sb.AppendLine("pause");
 
         File.WriteAllText(path, sb.ToString(), new UTF8Encoding(false));
