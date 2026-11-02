@@ -30,7 +30,7 @@ public sealed class BuildReportCommand : Command<BuildReportCommand.Settings>
                 : ValidationResult.Success();
     }
 
-    public override int Execute(CommandContext context, Settings s)
+    public override int Execute(CommandContext context, Settings s, CancellationToken cancellationToken)
     {
         var jsonPath = Path.Combine(s.Input, "updates.json");
         if (!File.Exists(jsonPath))

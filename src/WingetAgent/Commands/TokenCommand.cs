@@ -19,7 +19,7 @@ public sealed class TokenCommand : Command<TokenCommand.Settings>
         public string? Set { get; set; }
     }
 
-    public override int Execute(CommandContext context, Settings s)
+    public override int Execute(CommandContext context, Settings s, CancellationToken cancellationToken)
     {
         if (!string.IsNullOrWhiteSpace(s.Set))
         {
