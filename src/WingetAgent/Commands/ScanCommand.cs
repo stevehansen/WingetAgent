@@ -38,7 +38,7 @@ public sealed class ScanCommand : AsyncCommand<ScanCommand.Settings>
         public bool NoIncludeUnknown { get; set; }
     }
 
-    public override async Task<int> ExecuteAsync(CommandContext context, Settings s)
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings s, CancellationToken cancellationToken)
     {
         var dir = s.Output ?? RunPaths.NewRunDir();
         Directory.CreateDirectory(dir);
