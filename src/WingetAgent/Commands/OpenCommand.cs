@@ -23,7 +23,7 @@ public sealed class OpenCommand : Command<OpenCommand.Settings>
         public bool Folder { get; set; }
     }
 
-    public override int Execute(CommandContext context, Settings s)
+    public override int Execute(CommandContext context, Settings s, CancellationToken cancellationToken)
     {
         var dir = s.Input ?? RunPaths.Latest();
         if (string.IsNullOrEmpty(dir))

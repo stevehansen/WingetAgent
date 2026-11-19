@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using WingetAgent.Models;
 
 namespace WingetAgent.Output;
@@ -7,8 +8,8 @@ namespace WingetAgent.Output;
 /// Writes the dated batch file that actually applies the updates.
 /// Every package is pinned to its exact target version and installed silently. The
 /// file IS the approval record: SAFE/REVIEW items are active, while RISKY items (or
-/// anything Claude marked "Skip") are emitted as commented-out REM lines so the
-/// default is conservative. The operator curates by toggling "REM " on/off, then runs
+/// anything Claude marked "Skip", or a Package Policy excludes) are emitted as
+/// commented-out REM lines so the default is conservative. The operator curates by toggling "REM " on/off, then runs
 /// the file — which elevates itself to administrator.
 ///
 /// Elevation follows install scope: winget refuses to update a User-scope package from an
@@ -23,7 +24,8 @@ namespace WingetAgent.Output;
 /// </summary>
 public static class CmdWriter
 {
-    sealed record Planned(EnrichedUpdate Update, Annotation? Annotation, bool ClaudeSkip, bool Blocked, bool Skip)
+    sealed record Planned(EnrichedUpdate Update, Annotation? Annotation, bool ClaudeSkip, bool Excluded,
+        List<string> Close, bool Blocked, bool Skip)
     {
         public bool Active => !Blocked && !Skip;
     }
@@ -38,9 +40,12 @@ public static class CmdWriter
                 var rec = a?.Recommendation ?? "";
                 bool claudeSkip = rec.Equals("Skip", StringComparison.OrdinalIgnoreCase);
                 bool claudeApprove = rec.Equals("Approve", StringComparison.OrdinalIgnoreCase);
-                bool blocked = !IsSafeArg(u.Id) || !IsSafeArg(u.AvailableVersion);
-                bool skip = (u.Score.Band == SafetyBand.Risky || claudeSkip) && !claudeApprove;
-                return new Planned(u, a, claudeSkip, blocked, skip);
+                bool excluded = u.Policy?.Exclude == true;
+                var close = u.Policy?.CloseProcesses ?? new();
+                bool blocked = !IsSafeArg(u.Id) || !IsSafeArg(u.AvailableVersion) || !close.All(IsSafeImageName);
+                // A policy is the user's standing decision, so it outranks Claude's Approve.
+                bool skip = excluded || ((u.Score.Band == SafetyBand.Risky || claudeSkip) && !claudeApprove);
+                return new Planned(u, a, claudeSkip, excluded, close, blocked, skip);
             })
             .ToList();
         var user = planned.Where(p => p.Update.Scope == InstallScope.User).ToList();
@@ -50,7 +55,7 @@ public static class CmdWriter
         sb.AppendLine("@echo off");
         sb.AppendLine("setlocal EnableExtensions");
         sb.AppendLine($":: WingetAgent apply script - generated {run.GeneratedOn:yyyy-MM-dd HH:mm:ss} on {run.Machine}");
-        sb.AppendLine(":: Review report.html first. RISKY items (and anything flagged 'Skip') are commented out.");
+        sb.AppendLine(":: Review report.html first. RISKY items (and anything flagged 'Skip' or excluded by policy) are commented out.");
         sb.AppendLine(":: To enable a line, delete its leading 'REM '. To skip a line, add 'REM ' in front.");
         if (user.Count > 0)
         {
@@ -80,7 +85,7 @@ public static class CmdWriter
         sb.AppendLine("set \"FAIL=0\"");
         sb.AppendLine();
         AppendInstalls(sb, elevated);
-        AppendSummary(sb, "updates");
+        AppendSummary(sb, "updates", elevated: true);
     }
 
     // Layout: [non-elevated window] launch the elevated copy (/elevated) and wait, then the
@@ -113,7 +118,7 @@ public static class CmdWriter
         sb.AppendLine("echo Applying user-scope updates (no administrator rights needed)...");
         sb.AppendLine();
         AppendInstalls(sb, user);
-        AppendSummary(sb, "user-scope updates");
+        AppendSummary(sb, "user-scope updates", elevated: false);
         sb.AppendLine("exit /b");
         sb.AppendLine();
 
@@ -135,7 +140,7 @@ public static class CmdWriter
         sb.AppendLine("echo.");
         sb.AppendLine();
         AppendInstalls(sb, elevated);
-        AppendSummary(sb, "machine-scope updates");
+        AppendSummary(sb, "machine-scope updates", elevated: true);
     }
 
     static void AppendInstalls(StringBuilder sb, List<Planned> planned)
@@ -145,9 +150,14 @@ public static class CmdWriter
             sb.AppendLine("echo (No active updates - everything was skipped or blocked. Edit this file to enable lines.)");
 
         int active = 0;
-        foreach (var (u, a, claudeSkip, blocked, skip) in planned)
+        foreach (var (u, a, claudeSkip, excluded, close, blocked, skip) in planned)
         {
-            int score = a?.AdjustedScore ?? u.Score.Value;
+            // The Band belongs to the engine's Safety Score and is what gates the line, so
+            // keep the pair together; Claude's Adjusted Score and Recommendation are shown
+            // alongside, never mixed into it.
+            var label = $"{u.Score.Band.ToString().ToUpperInvariant()} {u.Score.Value}";
+            if (a?.AdjustedScore is int adjusted) label += $", adjusted {adjusted}";
+            if (!string.IsNullOrWhiteSpace(a?.Recommendation)) label += $", Claude: {a!.Recommendation}";
             var age = u.AgeDays?.ToString() ?? "?";
             var since = u.Baseline switch
             {
@@ -156,25 +166,34 @@ public static class CmdWriter
                 BaselineChange.Pending => $", pending {u.PendingDays ?? 0}d",
                 _ => "",
             };
-            sb.AppendLine($":: [{u.Score.Band.ToString().ToUpperInvariant()} {score}] {u.Id}  {u.CurrentVersion} -> {u.AvailableVersion}  ({u.Category}, {u.Jump}, age {age}d{since})");
+            sb.AppendLine($":: [{label}] {u.Id}  {u.CurrentVersion} -> {u.AvailableVersion}  ({u.Category}, {u.Jump}, age {age}d{since})");
             if (!string.IsNullOrWhiteSpace(a?.Notes))
                 sb.AppendLine($"::   note: {OneLine(a!.Notes)}");
+            if (!string.IsNullOrWhiteSpace(u.Policy?.Notes))
+                sb.AppendLine($"::   policy: {OneLine(u.Policy!.Notes)}");
 
             var cmd = $"winget install --id \"{u.Id}\" --version \"{u.AvailableVersion}\" --exact " +
                       "--silent --accept-package-agreements --accept-source-agreements --disable-interactivity";
             if (u.Source.Equals("msstore", StringComparison.OrdinalIgnoreCase))
                 cmd += " --source msstore";
 
+            // Some installers cancel while their app runs (Inno Setup AppMutex: "Please close all
+            // instances"), and --silent turns that prompt into an abort. Chained on the same line
+            // so toggling REM enables or disables both together; errorlevel stays winget's. Only
+            // stderr is hidden, so a kill prints its SUCCESS line and "not running" stays quiet.
+            foreach (var image in Enumerable.Reverse(close))
+                cmd = $"taskkill /f /im \"{image}\" 2>nul & {cmd}";
+
             // Defense against command injection (STRIDE T1): an Id/version from a hostile
             // source could carry batch metacharacters. Both are quoted; anything that could
             // still break out of quotes is blocked rather than executed.
             if (blocked)
             {
-                sb.AppendLine($"REM {cmd}   :: BLOCKED (unsafe characters in id/version)");
+                sb.AppendLine($"REM {cmd}   :: BLOCKED (unsafe characters in id/version/process name)");
             }
             else if (skip)
             {
-                var why = claudeSkip ? "Claude: skip" : "risky band";
+                var why = excluded ? "excluded by policy" : claudeSkip ? "Claude: skip" : "risky band";
                 sb.AppendLine($"REM {cmd}   :: SKIPPED ({why})");
             }
             else
@@ -193,12 +212,44 @@ public static class CmdWriter
         }
     }
 
-    static void AppendSummary(StringBuilder sb, string what)
+    // Only elevated parts get the Explorer check: the Restart Manager failure it covers comes
+    // from an elevated installer; user-scope installers run as the user, so RM can restart
+    // Explorer itself.
+    static void AppendSummary(StringBuilder sb, string what, bool elevated)
     {
         sb.AppendLine("echo.");
         sb.AppendLine("echo ----------------------------------------");
         sb.AppendLine($"if %FAIL% gtr 0 (echo Completed with %FAIL% failure^(s^). Review the output above.) else (echo All enabled {what} applied successfully.)");
+        if (elevated) AppendExplorerCheck(sb);
         sb.AppendLine("pause");
+    }
+
+    static void AppendExplorerCheck(StringBuilder sb)
+    {
+        sb.AppendLine();
+
+        // Installers that replace a shell extension (TeraCopy, WinSCP, ...) close Explorer
+        // through Restart Manager, which then refuses to restart it from this elevated
+        // script ("Application SID does not match Conductor SID"). Explorer can be left
+        // running without a taskbar (it lingers while a file copy is in progress), or not
+        // running at all. Offer the restart rather than force it: the kill would abort such
+        // a copy. An Explorer started from an elevated process de-elevates itself, and
+        // AutoRestartShell may already have relaunched it after the kill, hence the check.
+        // The window name is passed as IntPtr.Zero because PowerShell turns $null into ""
+        // for string parameters, which would only match windows with an empty title.
+        sb.AppendLine(":: ---- Explorer check: an installer may have closed it without restarting it ----");
+        sb.AppendLine("powershell -NoProfile -Command \"$w = Add-Type -Name Win -Namespace WingetAgent -PassThru -MemberDefinition '[DllImport(\\\"user32.dll\\\")] public static extern System.IntPtr FindWindow(string c, System.IntPtr n);'; if ($w::FindWindow('Shell_TrayWnd', [System.IntPtr]::Zero) -eq [System.IntPtr]::Zero) { exit 1 }\"");
+        sb.AppendLine("if errorlevel 1 (");
+        sb.AppendLine("  echo.");
+        sb.AppendLine("  echo The Windows taskbar is missing - an installer closed Explorer and it was not restarted.");
+        sb.AppendLine("  echo A file copy still running in Explorer would be aborted - let it finish first.");
+        sb.AppendLine("  choice /c YN /m \"Restart Windows Explorer now\"");
+        sb.AppendLine("  if not errorlevel 2 (");
+        sb.AppendLine("    taskkill /f /im explorer.exe >nul 2>&1");
+        sb.AppendLine("    timeout /t 3 /nobreak >nul");
+        sb.AppendLine("    tasklist /fi \"imagename eq explorer.exe\" | find /i \"explorer.exe\" >nul || start \"\" explorer.exe");
+        sb.AppendLine("  )");
+        sb.AppendLine(")");
     }
 
     static string OneLine(string s) => s.Replace("\r", " ").Replace("\n", " ").Trim();
@@ -223,4 +274,9 @@ public static class CmdWriter
     // contain these, so their presence means tampering — refuse to emit an active line.
     static bool IsSafeArg(string s)
         => !string.IsNullOrEmpty(s) && s.IndexOfAny(new[] { '"', '%', '\r', '\n' }) < 0;
+
+    // Process names come from the user's policies.json and land in the elevated script, so
+    // allow only a plain image file name (no paths, quotes, wildcards or metacharacters).
+    static bool IsSafeImageName(string s)
+        => Regex.IsMatch(s, @"^[A-Za-z0-9][A-Za-z0-9 ._-]*\.exe$", RegexOptions.IgnoreCase);
 }
