@@ -5,40 +5,33 @@ using WingetAgent.Models;
 namespace WingetAgent.Output;
 
 /// <summary>
-/// Writes the dated, self-elevating batch file that actually applies the updates.
+/// Writes the dated batch file that actually applies the updates.
 /// Every package is pinned to its exact target version and installed silently. The
 /// file IS the approval record: SAFE/REVIEW items are active, while RISKY items (or
 /// anything Claude marked "Skip", or a Package Policy excludes) are emitted as
 /// commented-out REM lines so the default is conservative. The operator curates by toggling "REM " on/off, then runs
-/// the file — which elevates itself to administrator on launch.
+/// the file — which elevates itself to administrator.
+///
+/// Elevation follows install scope: winget refuses to update a User-scope package from an
+/// administrator context (0x8a15007d), so when there are any, the file has two parts. The
+/// original, non-elevated window launches an elevated copy of the file for the machine
+/// (and unknown) scope updates and waits for it, then applies the User-scope updates
+/// itself. Elevated work goes first so the copy reads the file as administrator before any
+/// User-scope installer (running as the user) could have modified it.
 ///
 /// ASCII-only on purpose: batch consoles default to an OEM code page, so no em dashes
 /// or arrows here.
 /// </summary>
 public static class CmdWriter
 {
+    sealed record Planned(EnrichedUpdate Update, Annotation? Annotation, bool ClaudeSkip, bool Excluded,
+        List<string> Close, bool Blocked, bool Skip)
+    {
+        public bool Active => !Blocked && !Skip;
+    }
+
     public static void Write(string path, RunManifest run, IReadOnlyDictionary<string, Annotation> annotations)
     {
-        var sb = new StringBuilder();
-        sb.AppendLine("@echo off");
-        sb.AppendLine("setlocal EnableExtensions");
-        sb.AppendLine($":: WingetAgent apply script - generated {run.GeneratedOn:yyyy-MM-dd HH:mm:ss} on {run.Machine}");
-        sb.AppendLine(":: Review report.html first. RISKY items (and anything flagged 'Skip' or excluded by policy) are commented out.");
-        sb.AppendLine(":: To enable a line, delete its leading 'REM '. To skip a line, add 'REM ' in front.");
-        sb.AppendLine();
-        sb.AppendLine(":: ---- self-elevate to administrator ----");
-        sb.AppendLine("net session >nul 2>&1");
-        sb.AppendLine("if %errorlevel% neq 0 (");
-        sb.AppendLine("  echo Requesting administrator privileges...");
-        sb.AppendLine("  powershell -NoProfile -Command \"Start-Process -FilePath '%~f0' -Verb RunAs\"");
-        sb.AppendLine("  exit /b");
-        sb.AppendLine(")");
-        sb.AppendLine();
-        sb.AppendLine("echo WingetAgent - applying approved updates");
-        sb.AppendLine("echo.");
-        sb.AppendLine("set \"FAIL=0\"");
-        sb.AppendLine();
-
         var planned = run.Updates
             .OrderByDescending(x => x.Score.Value)
             .Select(u =>
@@ -52,11 +45,107 @@ public static class CmdWriter
                 bool blocked = !IsSafeArg(u.Id) || !IsSafeArg(u.AvailableVersion) || !close.All(IsSafeImageName);
                 // A policy is the user's standing decision, so it outranks Claude's Approve.
                 bool skip = excluded || ((u.Score.Band == SafetyBand.Risky || claudeSkip) && !claudeApprove);
-                return (u, a, claudeSkip, excluded, close, blocked, skip);
+                return new Planned(u, a, claudeSkip, excluded, close, blocked, skip);
             })
             .ToList();
+        var user = planned.Where(p => p.Update.Scope == InstallScope.User).ToList();
+        var elevated = planned.Where(p => p.Update.Scope != InstallScope.User).ToList();
 
-        int activeCount = planned.Count(p => !p.blocked && !p.skip);
+        var sb = new StringBuilder();
+        sb.AppendLine("@echo off");
+        sb.AppendLine("setlocal EnableExtensions");
+        sb.AppendLine($":: WingetAgent apply script - generated {run.GeneratedOn:yyyy-MM-dd HH:mm:ss} on {run.Machine}");
+        sb.AppendLine(":: Review report.html first. RISKY items (and anything flagged 'Skip' or excluded by policy) are commented out.");
+        sb.AppendLine(":: To enable a line, delete its leading 'REM '. To skip a line, add 'REM ' in front.");
+        if (user.Count > 0)
+        {
+            sb.AppendLine(":: Run this file normally (double-click), NOT 'Run as administrator': winget refuses");
+            sb.AppendLine(":: user-scope updates from an admin context, so those run here without elevation.");
+        }
+        sb.AppendLine();
+
+        if (user.Count == 0) WriteElevatedOnly(sb, elevated);
+        else WriteSplit(sb, user, elevated);
+
+        File.WriteAllText(path, sb.ToString(), new UTF8Encoding(false));
+    }
+
+    static void WriteElevatedOnly(StringBuilder sb, List<Planned> elevated)
+    {
+        sb.AppendLine(":: ---- self-elevate to administrator ----");
+        sb.AppendLine("net session >nul 2>&1");
+        sb.AppendLine("if %errorlevel% neq 0 (");
+        sb.AppendLine("  echo Requesting administrator privileges...");
+        sb.AppendLine("  powershell -NoProfile -Command \"Start-Process -FilePath '%~f0' -Verb RunAs\"");
+        sb.AppendLine("  exit /b");
+        sb.AppendLine(")");
+        sb.AppendLine();
+        sb.AppendLine("echo WingetAgent - applying approved updates");
+        sb.AppendLine("echo.");
+        sb.AppendLine("set \"FAIL=0\"");
+        sb.AppendLine();
+        AppendInstalls(sb, elevated);
+        AppendSummary(sb, "updates", elevated: true);
+    }
+
+    // Layout: [non-elevated window] launch the elevated copy (/elevated) and wait, then the
+    // user-scope installs + summary. [elevated copy] jumps straight to :elevated. [started
+    // elevated by the operator] can't do the user-scope part, so says so and does the rest.
+    static void WriteSplit(StringBuilder sb, List<Planned> user, List<Planned> elevated)
+    {
+        bool hasElevated = elevated.Count > 0;
+        sb.AppendLine("set \"FAIL=0\"");
+        if (hasElevated)
+            sb.AppendLine("if /i \"%~1\"==\"/elevated\" goto elevated");
+        sb.AppendLine("net session >nul 2>&1");
+        sb.AppendLine("if %errorlevel% equ 0 goto started-elevated");
+        sb.AppendLine();
+        sb.AppendLine("echo WingetAgent - applying approved updates");
+        sb.AppendLine("echo.");
+        if (hasElevated)
+        {
+            // WaitForExit rather than Start-Process -Wait: -Wait also waits for every
+            // descendant, and some installers leave long-lived processes behind.
+            sb.AppendLine(":: ---- machine-scope updates: run in an elevated copy of this file; this window waits ----");
+            sb.AppendLine("echo Requesting administrator privileges for the machine-scope updates...");
+            sb.AppendLine("echo They run in a separate administrator window. Close it when done to continue here.");
+            sb.AppendLine("powershell -NoProfile -Command \"try { (Start-Process -FilePath '%~f0' -ArgumentList '/elevated' -Verb RunAs -PassThru -ErrorAction Stop).WaitForExit() } catch { exit 1 }\"");
+            sb.AppendLine("if errorlevel 1 (set /a FAIL+=1& echo   ** Administrator rights declined - the machine-scope updates were NOT applied.)");
+            sb.AppendLine("echo.");
+            sb.AppendLine();
+        }
+        sb.AppendLine(":: ---- user-scope updates: run in this window, NOT elevated ----");
+        sb.AppendLine("echo Applying user-scope updates (no administrator rights needed)...");
+        sb.AppendLine();
+        AppendInstalls(sb, user);
+        AppendSummary(sb, "user-scope updates", elevated: false);
+        sb.AppendLine("exit /b");
+        sb.AppendLine();
+
+        sb.AppendLine(":started-elevated");
+        sb.AppendLine("echo NOTE: this window is already elevated, so the user-scope updates in this file");
+        sb.AppendLine("echo       will NOT be applied - winget refuses them from an administrator context.");
+        sb.AppendLine("echo       To apply them, close this window and run the file normally (double-click).");
+        if (!hasElevated)
+        {
+            sb.AppendLine("pause");
+            sb.AppendLine("exit /b");
+            return;
+        }
+        sb.AppendLine("echo       Or press a key to apply only the machine-scope updates now.");
+        sb.AppendLine("pause");
+        sb.AppendLine();
+        sb.AppendLine(":elevated");
+        sb.AppendLine("echo WingetAgent - applying approved machine-scope updates (administrator)");
+        sb.AppendLine("echo.");
+        sb.AppendLine();
+        AppendInstalls(sb, elevated);
+        AppendSummary(sb, "machine-scope updates", elevated: true);
+    }
+
+    static void AppendInstalls(StringBuilder sb, List<Planned> planned)
+    {
+        int activeCount = planned.Count(p => p.Active);
         if (activeCount == 0)
             sb.AppendLine("echo (No active updates - everything was skipped or blocked. Edit this file to enable lines.)");
 
@@ -121,10 +210,22 @@ public static class CmdWriter
             }
             sb.AppendLine();
         }
+    }
 
+    // Only elevated parts get the Explorer check: the Restart Manager failure it covers comes
+    // from an elevated installer; user-scope installers run as the user, so RM can restart
+    // Explorer itself.
+    static void AppendSummary(StringBuilder sb, string what, bool elevated)
+    {
         sb.AppendLine("echo.");
         sb.AppendLine("echo ----------------------------------------");
-        sb.AppendLine("if %FAIL% gtr 0 (echo Completed with %FAIL% failure^(s^). Review the output above.) else (echo All enabled updates applied successfully.)");
+        sb.AppendLine($"if %FAIL% gtr 0 (echo Completed with %FAIL% failure^(s^). Review the output above.) else (echo All enabled {what} applied successfully.)");
+        if (elevated) AppendExplorerCheck(sb);
+        sb.AppendLine("pause");
+    }
+
+    static void AppendExplorerCheck(StringBuilder sb)
+    {
         sb.AppendLine();
 
         // Installers that replace a shell extension (TeraCopy, WinSCP, ...) close Explorer
@@ -149,9 +250,6 @@ public static class CmdWriter
         sb.AppendLine("    tasklist /fi \"imagename eq explorer.exe\" | find /i \"explorer.exe\" >nul || start \"\" explorer.exe");
         sb.AppendLine("  )");
         sb.AppendLine(")");
-        sb.AppendLine("pause");
-
-        File.WriteAllText(path, sb.ToString(), new UTF8Encoding(false));
     }
 
     static string OneLine(string s) => s.Replace("\r", " ").Replace("\n", " ").Trim();

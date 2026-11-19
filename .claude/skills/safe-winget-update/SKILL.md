@@ -29,7 +29,7 @@ dotnet run --project src/WingetAgent -c Release -- scan
 
 ## Step 2: Analyze
 
-Read `RUNDIR/updates.json`. Each entry has the winget fields, derived `category`/`jump`/`publisher`, enrichment (`releaseDate`, `ageDays`, `recentVersions`), a run-over-run `baseline` (`New`/`Updated`/`Pending` + `pendingDays`), and a `score` with a `factors` breakdown. The run also lists `resolvedSinceBaseline` (applied since last run) and `baselineDate`.
+Read `RUNDIR/updates.json`. Each entry has the winget fields (incl. install `scope`: `User`/`Machine`/`Unknown`), derived `category`/`jump`/`publisher`, enrichment (`releaseDate`, `ageDays`, `recentVersions`), a run-over-run `baseline` (`New`/`Updated`/`Pending` + `pendingDays`), and a `score` with a `factors` breakdown. The run also lists `resolvedSinceBaseline` (applied since last run) and `baselineDate`.
 
 Use the baseline to focus your research: **New** and **Updated** items changed since last run and deserve a closer look; **Pending** items have been available a while (likely lower risk).
 
@@ -77,7 +77,8 @@ Tell the user:
 - What changed since the last run (new / updated / resolved), if there was a baseline.
 - The riskiest / most notable items and *why*, citing what you found.
 - How to view it: `dotnet run --project src/WingetAgent -c Release -- open` (report in browser) or `... open --folder` (the run folder). Mention the `RUNDIR` path too.
-- That they should review, optionally curate the `.cmd` (toggle `REM ` on/off), then **run `apply-updates.cmd` as administrator** to apply. It self-elevates, labels each install `[n/N]`, prints `OK`/`** FAILED` per package, and ends with a failure-count summary — so any package winget couldn't install is named.
+- That they should review, optionally curate the `.cmd` (toggle `REM ` on/off), then **run `apply-updates.cmd` normally (double-click, not "Run as administrator")** to apply. It self-elevates, labels each install `[n/N]`, prints `OK`/`** FAILED` per package, and ends with a failure-count summary — so any package winget couldn't install is named.
+- If any updates are `User` scope: the script first opens an elevated window for the machine-scope ones; once the user closes it, the original window applies the user-scope ones without elevation (winget refuses those as admin). Name the user-scope packages so the two-window flow isn't a surprise.
 
 **Never run `apply-updates.cmd` yourself.** Applying updates is the user's explicit action.
 

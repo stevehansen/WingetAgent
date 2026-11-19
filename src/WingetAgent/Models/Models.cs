@@ -9,6 +9,12 @@ public enum SafetyBand { Safe, Review, Risky }
 /// <summary>How an Update changed versus the previous run (the baseline).</summary>
 public enum BaselineChange { NoBaseline, New, Updated, Pending }
 
+/// <summary>
+/// Where the installed package lives. winget refuses to update a User-scope package from an
+/// administrator context (0x8a15007d), so the Apply Script runs those without elevation.
+/// </summary>
+public enum InstallScope { User, Machine, Unknown }
+
 /// <summary>One contributing reason to a safety score, with its point delta.</summary>
 public sealed class ScoreFactor
 {
@@ -36,6 +42,7 @@ public sealed class EnrichedUpdate
     public string CurrentVersion { get; set; } = "";
     public string AvailableVersion { get; set; } = "";
     public string Source { get; set; } = "";
+    public InstallScope Scope { get; set; } = InstallScope.Unknown;
 
     // Derived locally
     public string Publisher { get; set; } = "";

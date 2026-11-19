@@ -22,8 +22,25 @@ public static class WingetClient
     public static List<EnrichedUpdate> GetUpgrades(bool includeUnknown)
     {
         var args = "upgrade --accept-source-agreements" + (includeUnknown ? " --include-unknown" : "");
-        return Parse(RunWinget(args));
+        var updates = Parse(RunWinget(args));
+
+        // The table has no scope column, so re-list per scope. A package in neither list
+        // (e.g. MSIX) or in both (installed twice) stays Unknown, and so does everything if
+        // this winget doesn't support --scope (the output then parses to nothing).
+        var user = Ids(RunWinget(args + " --scope user"));
+        var machine = Ids(RunWinget(args + " --scope machine"));
+        foreach (var u in updates)
+            u.Scope = (user.Contains(u.Id), machine.Contains(u.Id)) switch
+            {
+                (true, false) => InstallScope.User,
+                (false, true) => InstallScope.Machine,
+                _ => InstallScope.Unknown,
+            };
+        return updates;
     }
+
+    static HashSet<string> Ids(string output)
+        => Parse(output).Select(u => u.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     internal static List<EnrichedUpdate> Parse(string output)
     {

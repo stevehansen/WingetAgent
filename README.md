@@ -6,7 +6,7 @@ A **safe, reviewed winget update flow**. It never installs anything automaticall
 2. **Enriches** each one with version history and release date from the [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) manifests.
 3. **Scores** every update for safety (0–100) from how mature the target version is, how big the version jump is, what kind of software it is, and whether the publisher is known.
 4. **Reviews** them (via the Claude skill) — researching known issues for the exact target versions and annotating each.
-5. Produces a dated **HTML report** and a curated, self-elevating **`apply-updates.cmd`** that pins every package to an exact version. You review, then run the `.cmd` as administrator.
+5. Produces a dated **HTML report** and a curated, self-elevating **`apply-updates.cmd`** that pins every package to an exact version. You review, then run the `.cmd` (it asks for administrator rights itself).
 
 Each run is kept under `~/.winget-agent/runs/<timestamp>/` (outside the repo), so the `.cmd` files double as a local update history.
 
@@ -68,9 +68,11 @@ Useful flags on `scan`:
 
 ## Applying updates
 
-Open `report.html`, optionally curate `apply-updates.cmd` (each install line can be toggled by adding/removing a leading `REM `), then **run `apply-updates.cmd` as administrator**. It self-elevates via UAC on launch. Risky items, anything the review flagged `Skip`, and anything a [package policy](#package-policies) excludes are commented out by default. Every package is pinned to an exact version, and any id/version containing unsafe characters is `BLOCKED` rather than run.
+Open `report.html`, optionally curate `apply-updates.cmd` (each install line can be toggled by adding/removing a leading `REM `), then **run `apply-updates.cmd` normally (double-click)**. It self-elevates via UAC on launch. Risky items, anything the review flagged `Skip`, and anything a [package policy](#package-policies) excludes are commented out by default. Every package is pinned to an exact version, and any id/version containing unsafe characters is `BLOCKED` rather than run.
 
 As it runs, each enabled update is announced — `[n/N] Id  cur -> new` — and reported `OK` or `** FAILED` afterward, with a final summary line. So if winget can't satisfy a pin (e.g. `No applicable installer found`), the failing package is named instead of lost in the scroll.
+
+**User-scope packages** (installed per-user, e.g. into `%LOCALAPPDATA%`) are handled separately, because winget refuses to update them from an administrator context (`0x8a15007d`). The scan detects each update's install scope (shown in the report). When there are user-scope updates, the script opens an elevated window for the machine-scope ones, waits for you to close it, then applies the user-scope ones in the original, non-elevated window, each part with its own summary. That's why it should be started normally: launched via *Run as administrator*, it skips the user-scope updates and says so.
 
 ## Package policies
 
@@ -83,7 +85,7 @@ Standing per-package rules live in `~/.winget-agent/policies.json` and apply to 
 ]
 ```
 
-- `exclude` keeps the package's line commented out in `apply-updates.cmd`, whatever its band or the review says. Use it for packages updated another way (their own updater or installer), or for ones winget can't update from an elevated script.
+- `exclude` keeps the package's line commented out in `apply-updates.cmd`, whatever its band or the review says. Use it for packages updated another way (their own updater or installer).
 - `closeProcesses` force-closes those processes (plain `name.exe` only; anything else blocks the line) right before the install, for installers that abort while their app runs. Unsaved work in that app is lost.
 
 The report shows each policy, and the script prints `policy:` next to the affected line.
